@@ -1,0 +1,11 @@
+{
+  "name": "coralogix-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP server for querying Coralogix DataPrime API",
+  "main": "src/index.js",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.28.0",
+    "zod": "3.25.76"
+  }
+}

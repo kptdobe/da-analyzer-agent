@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__coralogix__query_coralogix",
+      "Bash(git *)",
+      "Bash(gh *)",
+      "Bash(npm *)",
+      "Bash(node *)",
+      "Bash(grep *)",
+      "Bash(find *)",
+      "Bash(ls *)",
+      "Bash(cat *)"
+    ]
+  }
+}
