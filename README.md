@@ -22,7 +22,7 @@ Claude Code workspace for DA (Document Authoring) log analysis, error investigat
 ### Install
 
 ```bash
-git clone https://github.com/adobe/da-analyzer-agent
+git clone https://github.com/kptdobe/da-analyzer-agent
 cd da-analyzer-agent
 chmod +x setup.sh && ./setup.sh
 ```
