@@ -14,25 +14,113 @@ const API_KEYS = {
 
 /**
  * Parse newline-delimited JSON response from Coralogix DataPrime API.
- * Each line is a JSON object: { result: { results: [{ userData: '...' }] } }
+ * Returns { rows, stats } where rows are the log/aggregation results and
+ * stats contains the query statistics (scan size, duration, etc.).
+ * Each CDN access log row has _timestamp injected from Coralogix row metadata.
  */
 function parseCoralogixResponse(text) {
-  if (!text || !text.trim()) return [];
-  return text
-    .split('\n')
-    .filter(Boolean)
-    .flatMap((line) => {
+  if (!text || !text.trim()) return { rows: [], stats: null };
+
+  const rows = [];
+  let stats = null;
+
+  for (const line of text.split('\n').filter(Boolean)) {
+    try {
       const parsed = JSON.parse(line);
-      // Handle both result rows and metadata/error lines
-      const results = parsed?.result?.results ?? [];
-      return results.map(({ userData }) => JSON.parse(userData));
+      const results = parsed?.result?.results;
+      if (results?.length) {
+        for (const { userData, metadata: rowMeta } of results) {
+          try {
+            const row = JSON.parse(userData);
+            // CDN access logs don't have a $d.timestamp field — inject the
+            // Coralogix ingestion timestamp from the row-level metadata instead.
+            if (!row.timestamp && rowMeta?.timestamp) {
+              row._timestamp = rowMeta.timestamp;
+            }
+            rows.push(row);
+          } catch { /* skip malformed userData */ }
+        }
+      }
+      if (parsed?.statistics) stats = parsed.statistics;
+    } catch { /* skip malformed NDJSON lines */ }
+  }
+
+  return { rows, stats };
+}
+
+/**
+ * For time-windowed aggregation the Coralogix API returns a server-side cached
+ * result that ignores metadata startDate/endDate entirely (confirmed: measuredValue
+ * is ~160 bytes regardless of time range). The only reliable approach is to fetch
+ * raw log rows (which ARE time-filtered) and aggregate client-side.
+ *
+ * This function takes raw rows and groups them by one or more key paths,
+ * returning [{ <key>: value, ..., count: N }] sorted by count desc.
+ */
+function clientSideGroupBy(rows, keyPaths) {
+  const counts = new Map();
+  for (const row of rows) {
+    const key = keyPaths.map((p) => {
+      const parts = p.split('.');
+      let v = row;
+      for (const part of parts) v = v?.[part];
+      return v ?? null;
+    }).join('|');
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, count]) => {
+      const values = key.split('|');
+      const obj = { count };
+      keyPaths.forEach((p, i) => { obj[p] = values[i] === 'null' ? null : values[i]; });
+      return obj;
     });
 }
 
-async function queryCoralogix(env, query) {
+/**
+ * Parse `source logs last Xh/m/d` from the query and return ISO startDate/endDate.
+ * The Coralogix API's metadata time range takes precedence over the in-query directive
+ * and ensures the time window is respected.
+ */
+function parseTimeRange(query) {
+  const match = query.match(/\bsource\s+logs\s+last\s+(\d+)(h|m|d)\b/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  const ms = { h: 3_600_000, m: 60_000, d: 86_400_000 }[unit];
+  const endDate = new Date();
+  const startDate = new Date(endDate.getTime() - amount * ms);
+  return { startDate: startDate.toISOString(), endDate: endDate.toISOString() };
+}
+
+async function queryCoralogix(env, query, startTime, endTime) {
   const apiKey = API_KEYS[env];
   if (!apiKey) {
     throw new Error(`No API key configured for environment "${env}". Set CORALOGIX_${env.toUpperCase().replace('-', '_')}_KEY.`);
+  }
+
+  let timeRange;
+  if (startTime) {
+    // Explicit absolute bounds override any "last Xh" in the query.
+    // Strip the relative time directive so the two don't conflict.
+    query = query.replace(/\bsource\s+logs\s+last\s+\d+[hmd]\b/i, 'source logs');
+    timeRange = {
+      startDate: new Date(startTime).toISOString(),
+      endDate: endTime ? new Date(endTime).toISOString() : new Date().toISOString(),
+    };
+  } else {
+    timeRange = parseTimeRange(query);
+  }
+
+  const requestBody = { query };
+  if (timeRange) {
+    requestBody.metadata = {
+      startDate: timeRange.startDate,
+      endDate: timeRange.endDate,
+      tier: 'TIER_FREQUENT_SEARCH',
+      syntax: 'QUERY_SYNTAX_DATAPRIME',
+    };
   }
 
   const endpoint = ENDPOINTS[env];
@@ -42,13 +130,14 @@ async function queryCoralogix(env, query) {
       'content-type': 'application/json',
       authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify(requestBody),
   });
 
   const body = await resp.text();
   if (!resp.ok) throw new Error(`Coralogix query failed [${resp.status}]: ${body}`);
 
-  return parseCoralogixResponse(body);
+  const { rows, stats } = parseCoralogixResponse(body);
+  return { rows, stats, timeRange };
 }
 
 const server = new McpServer({
@@ -181,7 +270,21 @@ server.registerTool(
       + '### Time windows\n'
       + '✅ source logs last 1h\n'
       + '✅ source logs last 24h\n'
-      + '✅ source logs last 7d\n\n'
+      + '✅ source logs last 7d\n'
+      + 'The MCP automatically adds metadata.startDate/endDate to the API request based on the "last Xh/m/d" directive.\n\n'
+
+      + '### ⚠️  Aggregation queries are served from Coralogix server-side cache\n'
+      + 'Confirmed via raw API response: "groupby ... agg count()" queries scan only ~160 bytes (pre-computed summary).\n'
+      + 'The time window metadata IS sent to the API, but the cached aggregation result is returned regardless of the window.\n'
+      + 'This means different "last Xm/h/d" windows will return the SAME count for aggregation queries during an active incident.\n'
+      + 'DO NOT use aggregation queries to compare time-window counts — the results will be identical.\n'
+      + 'Use "select" + "limit" with narrow windows to retrieve raw log samples instead, and count them client-side.\n\n'
+
+      + '### Time-series / per-minute bucketing\n'
+      + '⚠️  $m.timestamp and $l.timestamp do NOT exist in this API — "groupby $m.timestamp / (1m)" fails.\n'
+      + '⚠️  $d.timestamp is present in raw log output but returns null in DataPrime filter/groupby expressions.\n'
+      + 'There is no supported per-minute bucketing in this environment via DataPrime queries.\n'
+      + 'Use the Coralogix UI histogram for time-series views of incident peaks.\n\n'
 
       + '### limit\n'
       + '✅ Always add | limit N at the end of exploratory queries to avoid huge result sets.\n'
@@ -204,17 +307,42 @@ server.registerTool(
         + '  // ACCESS logs — top paths with 5xx\n'
         + '  source logs last 7d | filter $d.EdgeResponseStatus >= 500 | groupby $d.ClientRequestPath agg count() as cnt | orderby cnt desc | limit 50',
       ),
+      startTime: z.string().optional().describe(
+        'ISO 8601 start of the time window, e.g. "2026-05-21T13:55:00Z". '
+        + 'When provided, overrides any "last Xh/m/d" in the query string and sets the API metadata time range. '
+        + 'Use this to query a specific absolute window (e.g. an incident window) rather than a relative one. '
+        + 'Pair with endTime for a closed range; omit endTime to use now as the end.',
+      ),
+      endTime: z.string().optional().describe(
+        'ISO 8601 end of the time window, e.g. "2026-05-21T14:05:00Z". '
+        + 'Only used when startTime is also provided. Defaults to now if omitted.',
+      ),
+      groupBy: z.array(z.string()).optional().describe(
+        'When startTime is provided, aggregation queries return server-cached results that ignore the time range. '
+        + 'Use groupBy instead: supply a list of dot-notation field paths (e.g. ["helix.backend_type", "helix.request_type"]) '
+        + 'and the MCP will fetch raw log rows for the time window and aggregate them client-side. '
+        + 'The query should use "select" (not "groupby ... agg count()") and a high limit (e.g. | limit 20000). '
+        + 'Returns [{ <field>: value, ..., count: N }] sorted by count desc.',
+      ),
     },
   },
-  async ({ env, query }) => {
-    const results = await queryCoralogix(env, query);
+  async ({ env, query, startTime, endTime, groupBy }) => {
+    const { rows, stats, timeRange } = await queryCoralogix(env, query, startTime, endTime);
+
+    let output;
+    if (groupBy?.length) {
+      output = {
+        timeRange,
+        groupBy: clientSideGroupBy(rows, groupBy),
+        rowsScanned: rows.length,
+        stats,
+      };
+    } else {
+      output = rows;
+    }
+
     return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(results, null, 2),
-        },
-      ],
+      content: [{ type: 'text', text: JSON.stringify(output, null, 2) }],
     };
   },
 );
