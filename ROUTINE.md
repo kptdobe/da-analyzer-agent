@@ -66,7 +66,7 @@ WORKSPACE LAYOUT (all paths relative to session root):
   ./da-analyzer-agent/   — kptdobe/da-analyzer-agent: knowledge base +
                             run-log target. Unrestricted push enabled.
                             Commit CLAUDE.md / ROUTINE.md updates and
-                            runs/YYYY-MM-DD.md directly to main here.
+                            routine/YYYY-MM-DD.md directly to main here.
   ./da-admin/            — adobe/da-admin   (backend, PRs on claude/ branches)
   ./da-collab/           — adobe/da-collab  (backend, PRs on claude/ branches)
   ./da-content/          — adobe/da-content (backend, PRs on claude/ branches)
@@ -93,7 +93,7 @@ STEPS (details in ROUTINE.md):
        b. Architecture / pattern-level: open an issue in the matching
           adobe/* repo with log extract, hypothesis, decision needed.
        c. Ambiguous: default to issue.
-  6. Write the daily run-log to ./da-analyzer-agent/runs/YYYY-MM-DD.md
+  6. Write the daily run-log to ./da-analyzer-agent/routine/YYYY-MM-DD.md
      and commit to kptdobe/da-analyzer-agent main. Format in ROUTINE.md §7.
   7. Self-optimize (ROUTINE.md §8). Toolbox updates → CLAUDE.md.
      Protocol updates → ROUTINE.md. Note the update in the run-log under
@@ -107,7 +107,7 @@ CONSTRAINTS:
     surprising happened.
 
 OUTPUT: short, clear daily run-log committed to
-./da-analyzer-agent/runs/YYYY-MM-DD.md on kptdobe/da-analyzer-agent main.
+./da-analyzer-agent/routine/YYYY-MM-DD.md on kptdobe/da-analyzer-agent main.
 Aggregate table + recurring-pattern recognition + per-finding (keyword,
 dedup result, PR-or-issue link with reason for the choice, log extract) +
 memory updates. Nothing else.
@@ -228,7 +228,7 @@ Do not assign. Do not add labels (Adobe label conventions vary per repo).
 
 ## 7. Daily run-log format
 
-Commit to `./da-analyzer-agent/runs/YYYY-MM-DD.md` on
+Commit to `./da-analyzer-agent/routine/YYYY-MM-DD.md` on
 `kptdobe/da-analyzer-agent` `main`. Keep it scannable — this is the
 first thing read on incident review.
 
