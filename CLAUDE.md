@@ -25,11 +25,12 @@ routine (cadence, output format, automation gotchas), update
 ## Sections
 
 1. Repo map
-2. Querying logs (Coralogix DataPrime)
-3. DataPrime gotchas
-4. Drill-down templates
-5. Known recurring patterns
-6. Operating constraints
+2. Querying logs — ClickHouse (primary)
+3. Querying logs — Coralogix DataPrime (legacy)
+4. DataPrime gotchas
+5. Drill-down templates
+6. Known recurring patterns
+7. Operating constraints
 
 ---
 
@@ -75,50 +76,114 @@ they show up.
 
 ---
 
-## 2. Querying logs (Coralogix DataPrime)
+## 2. Querying logs — ClickHouse (primary)
 
-Logs flow into the Coralogix `da-logs` environment. Access is via the
-in-repo Coralogix MCP server (`./mcp-servers/coralogix/`), exposed as
-the `mcp__coralogix__query_coralogix` tool.
+DA logs are migrating from Coralogix to ClickHouse. Use ClickHouse for
+all new queries. The MCP tool is `mcp__clickhouse__query_clickhouse`,
+backed by `./mcp-servers/clickhouse/` in this repo.
 
-A second environment, `helix`, exists for the broader Helix platform.
-Out of scope for this workspace, but worth knowing about for
-interactive sessions chasing upstream issues.
+### Table
 
-Two log streams exist:
+`helix_logs_production.da` — Cloudflare CDN access logs. One row per
+HTTP request. This is HTTP-level only (no console logs, no stack
+traces — those come from the worker trace stream, which is not yet in
+ClickHouse).
 
-- **Worker trace stream** — keyed by `$d.ScriptName`. Has thrown
-  exceptions, console logs, request/response shape. This is the primary
-  source for error investigation.
-- **Access log stream** — keyed by `$d.WorkerScriptName`. HTTP-level
-  only, no application context. Useful for traffic/load questions, less
-  useful for bug hunting.
+### Key columns
+
+Column names containing dots **must** be backtick-quoted in SQL.
+
+| Column | Description |
+|--------|-------------|
+| `timestamp` | DateTime64(3) UTC. Always filter on this. |
+| `` `cdn.script_name` `` | Worker: `da-admin`, `da-collab`, `da-content`, `da-website`, `da-ue`, `da-docket`, or `''` for pure CDN |
+| `` `response.status` `` | HTTP status code returned to the client |
+| `` `request.url` `` | Request path (e.g. `/source/org/repo/file.html`) |
+| `` `request.host` `` | Host header (e.g. `admin.da.live`) |
+| `` `request.method` `` | HTTP method |
+| `` `cdn.url` `` | Full URL including scheme + host |
+| `` `cdn.cache_status` `` | `hit`, `miss`, `expired`, `bypass`, `unknown`, … |
+| `` `cdn.time_elapsed_msec` `` | Request wall-clock time (ms) |
+| `` `client.country_name` `` | ISO country code (e.g. `"us"`, `"in"`) |
+| `` `helix.owner` `` | GitHub org (e.g. `"adobecom"`) |
+| `` `helix.repo` `` | GitHub repo name |
+| `` `response.headers.x_error` `` | `x-error` header set by workers on errors |
 
 ### Canonical investigation patterns
 
-**Worker × outcome × HTTP status × exception** (catches thrown
-exceptions). `explode` drops rows with no exceptions, so this captures
-`Outcome == 'exception'` cleanly. Run once per worker — see §3 on the
-`$d.ScriptName` groupby limitation.
+```sql
+-- 5xx errors by worker (last 24h)
+SELECT `cdn.script_name`, `response.status`, COUNT(*) AS cnt
+FROM helix_logs_production.da
+WHERE timestamp >= now() - INTERVAL 24 HOUR
+  AND `response.status` >= 500
+GROUP BY `cdn.script_name`, `response.status`
+ORDER BY cnt DESC
 
-**HTTP-only 5xx** (`Outcome == 'ok'`, no thrown exception). Needed
-because `explode` drops empty arrays — these surface as "5xx returned
-but no exception thrown."
+-- Error rate by worker over an absolute window
+SELECT `cdn.script_name`,
+       countIf(`response.status` >= 500) AS errors,
+       COUNT(*) AS total,
+       round(100 * errors / total, 2) AS error_pct
+FROM helix_logs_production.da
+WHERE timestamp >= {startTime} AND timestamp < {endTime}
+GROUP BY `cdn.script_name`
+ORDER BY error_pct DESC
 
-**Console-error / warn surface** (per-worker). Catches bugs that
-return 200 to the client but log an internal error/warn — the
-canonical query misses these because `Outcome == 'ok'` and
-`Status < 500`. `groupby` after `explode $d.Logs` only works on the
-post-explode `l.*` fields. An `l.Level == 'warn'` variant is often
-useful alongside `'error'`.
+-- Top 5xx paths for a specific worker
+SELECT `request.url`, `response.status`, `response.headers.x_error`, COUNT(*) AS cnt
+FROM helix_logs_production.da
+WHERE timestamp >= now() - INTERVAL 1 HOUR
+  AND `cdn.script_name` = 'da-admin'
+  AND `response.status` >= 500
+GROUP BY `request.url`, `response.status`, `response.headers.x_error`
+ORDER BY cnt DESC
+LIMIT 20
 
-These three queries are the workhorses. The routine runs them daily for
-all three backend workers (see `ROUTINE.md`); for interactive use,
-pick the one that matches what you're chasing.
+-- Hourly time-series (ClickHouse supports time bucketing natively)
+SELECT toStartOfHour(timestamp) AS hour, COUNT(*) AS cnt
+FROM helix_logs_production.da
+WHERE timestamp >= now() - INTERVAL 24 HOUR
+  AND `cdn.script_name` = 'da-admin'
+GROUP BY hour
+ORDER BY hour
+```
+
+### ClickHouse SQL notes
+
+- `toStartOfHour(timestamp)`, `toStartOfDay(timestamp)`,
+  `toStartOfMinute(timestamp)` — time bucketing works natively (unlike
+  Coralogix DataPrime where it was broken).
+- `countIf(<cond>)` — conditional count in one pass.
+- `uniq(<col>)` — approximate distinct count.
+- `quantile(0.95)(<col>)` — percentile.
+- String matching: `LIKE '%pattern%'`, `startsWith(col, 'prefix')`,
+  `match(col, 'regex')`.
+- `{startTime}` / `{endTime}` placeholders in the SQL are replaced by
+  the MCP with quoted datetime strings when those params are provided.
+- Always add `LIMIT N` on exploratory queries.
 
 ---
 
-## 3. DataPrime gotchas
+## 3. Querying logs — Coralogix DataPrime (legacy)
+
+Still available during migration via `mcp__coralogix__query_coralogix`
+(`~/.claude/mcp-servers/coralogix/`). Use for:
+
+- **Worker trace logs** (`$d.ScriptName`) — console errors, thrown
+  exceptions, `$d.Outcome`. These are not yet in ClickHouse.
+- Cross-checking if ClickHouse data looks wrong.
+
+Two log streams in the `da-logs` environment:
+
+- **Worker trace stream** — keyed by `$d.ScriptName`. Has thrown
+  exceptions, console logs, request/response shape.
+- **Access log stream** — keyed by `$d.WorkerScriptName`. HTTP-level;
+  superseded by ClickHouse for new queries.
+
+---
+
+## 4. DataPrime gotchas
 
 Painful re-derivations. Read these before writing a query.
 
@@ -204,7 +269,7 @@ Painful re-derivations. Read these before writing a query.
 
 ---
 
-## 4. Drill-down templates
+## 5. Drill-down templates
 
 _(Populate as patterns emerge. Add a template here only when you've
 re-derived it more than once. Keep sparse — context cost matters for
@@ -212,7 +277,7 @@ interactive sessions.)_
 
 ---
 
-## 5. Known recurring patterns
+## 6. Known recurring patterns
 
 Background-noise errors that fire continuously and are either
 benign-by-design or already tracked. **Treat as baseline; do not file
@@ -224,7 +289,7 @@ baseline rate (per 24h) | last observed | known PR/issue if any.)_
 
 ---
 
-## 6. Operating constraints
+## 7. Operating constraints
 
 - Worker trace stream only (`$d.ScriptName`) for application-level
   investigation. Access logs (`$d.WorkerScriptName`) are HTTP-only.
@@ -241,6 +306,11 @@ baseline rate (per 24h) | last observed | known PR/issue if any.)_
   `node -e '<script>'` (allowed by `Bash(node:*)`) reading env vars
   via `process.env` and any payload from a freely-writable path under
   the auto-memory dir.
-- Coralogix auth: `CORALOGIX_API_KEY` from the environment. The MCP
-  server in `./mcp-servers/coralogix/` reads `process.env`. Never log
-  it.
+- ClickHouse auth: `CLICKHOUSE_API_KEY` and `CLICKHOUSE_API_SECRET` from
+  the environment. MCP server at `./mcp-servers/clickhouse/` in this repo
+  reads `process.env`. Endpoint:
+  `https://queries.clickhouse.cloud/service/6f3c51d6-c282-421a-a46d-54fc08d4ce99/run`.
+  Never log credentials.
+- Coralogix auth: `CORALOGIX_DA_KEY` from the environment. The MCP
+  server in `./mcp-servers/coralogix/` in this repo reads `process.env`.
+  Never log it.

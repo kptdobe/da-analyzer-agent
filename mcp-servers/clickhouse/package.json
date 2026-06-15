@@ -1,0 +1,10 @@
+{
+  "name": "clickhouse-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP server for querying DA logs in ClickHouse",
+  "main": "src/index.js",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.28.0"
+  }
+}
