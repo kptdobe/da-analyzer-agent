@@ -127,11 +127,10 @@ memory updates. Nothing else.
   - `adobe/da-live` — OFF
   - `adobe/da-nx` — OFF
 - **Environment**: custom.
-  - Allowed domains: default + the Coralogix endpoint (narrow as far as
-    possible — e.g. `eu2.coralogix.com` or the specific da-logs host —
-    rather than `*.coralogix.com`).
-  - Env vars: `CORALOGIX_API_KEY`.
-- **Setup script**: `cd da-analyzer-agent/mcp-servers/coralogix && npm ci`
+  - Allowed domains: default + `queries.clickhouse.cloud` (narrow to the
+    specific service host rather than `*.clickhouse.cloud`).
+  - Env vars: `CLICKHOUSE_API_KEY`, `CLICKHOUSE_API_SECRET`.
+- **Setup script**: `cd da-analyzer-agent/mcp-servers/clickhouse && npm ci`
   (cached after first run).
 - **Connectors**: GitHub.
 - **Triggers**:

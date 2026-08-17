@@ -17,8 +17,8 @@ for cmd in node npm gh; do
 done
 
 # Install MCP server dependencies
-echo "Installing Coralogix MCP server dependencies..."
-npm install --prefix "$SCRIPT_DIR/mcp-servers/coralogix" --silent
+echo "Installing ClickHouse MCP server dependencies..."
+npm install --prefix "$SCRIPT_DIR/mcp-servers/clickhouse" --silent
 echo "Done."
 echo ""
 
@@ -31,38 +31,37 @@ else
   SHELL_PROFILE="$HOME/.profile"
 fi
 
-# Coralogix DA API key
-if [ -z "${CORALOGIX_DA_KEY:-}" ]; then
-  echo "Coralogix DA API key"
-  echo "  Get one at: da-logs.coralogix.com → Settings → API Keys → New Key (Query, read-only)"
+# ClickHouse API key
+if [ -z "${CLICKHOUSE_API_KEY:-}" ]; then
+  echo "ClickHouse API key"
   echo -n "  Key: "
-  read -r -s CORALOGIX_DA_KEY_INPUT
+  read -r -s CLICKHOUSE_API_KEY_INPUT
   echo ""
-  if [ -n "$CORALOGIX_DA_KEY_INPUT" ]; then
+  if [ -n "$CLICKHOUSE_API_KEY_INPUT" ]; then
     echo "" >> "$SHELL_PROFILE"
-    echo "export CORALOGIX_DA_KEY=$CORALOGIX_DA_KEY_INPUT" >> "$SHELL_PROFILE"
-    echo "  Added CORALOGIX_DA_KEY to $SHELL_PROFILE"
-    export CORALOGIX_DA_KEY="$CORALOGIX_DA_KEY_INPUT"
+    echo "export CLICKHOUSE_API_KEY=$CLICKHOUSE_API_KEY_INPUT" >> "$SHELL_PROFILE"
+    echo "  Added CLICKHOUSE_API_KEY to $SHELL_PROFILE"
+    export CLICKHOUSE_API_KEY="$CLICKHOUSE_API_KEY_INPUT"
   else
-    echo "  Skipped (no key entered). Set CORALOGIX_DA_KEY manually in your shell profile."
+    echo "  Skipped (no key entered). Set CLICKHOUSE_API_KEY manually in your shell profile."
   fi
 else
-  echo "CORALOGIX_DA_KEY already set — skipping."
+  echo "CLICKHOUSE_API_KEY already set — skipping."
 fi
 echo ""
 
-# Coralogix Helix key (optional)
-if [ -z "${CORALOGIX_HELIX_KEY:-}" ]; then
-  echo "Coralogix Helix API key (optional — needed for Helix log queries)"
-  echo -n "  Key (press Enter to skip): "
-  read -r -s CORALOGIX_HELIX_KEY_INPUT
+# ClickHouse API secret
+if [ -z "${CLICKHOUSE_API_SECRET:-}" ]; then
+  echo "ClickHouse API secret"
+  echo -n "  Secret: "
+  read -r -s CLICKHOUSE_API_SECRET_INPUT
   echo ""
-  if [ -n "$CORALOGIX_HELIX_KEY_INPUT" ]; then
-    echo "export CORALOGIX_HELIX_KEY=$CORALOGIX_HELIX_KEY_INPUT" >> "$SHELL_PROFILE"
-    echo "  Added CORALOGIX_HELIX_KEY to $SHELL_PROFILE"
+  if [ -n "$CLICKHOUSE_API_SECRET_INPUT" ]; then
+    echo "export CLICKHOUSE_API_SECRET=$CLICKHOUSE_API_SECRET_INPUT" >> "$SHELL_PROFILE"
+    echo "  Added CLICKHOUSE_API_SECRET to $SHELL_PROFILE"
   fi
 else
-  echo "CORALOGIX_HELIX_KEY already set — skipping."
+  echo "CLICKHOUSE_API_SECRET already set — skipping."
 fi
 echo ""
 
@@ -96,11 +95,11 @@ fi
 echo ""
 
 # Generate .claude/settings.local.json with absolute MCP server path
-MCP_PATH="$SCRIPT_DIR/mcp-servers/coralogix/src/index.js"
+MCP_PATH="$SCRIPT_DIR/mcp-servers/clickhouse/src/index.js"
 cat > "$CLAUDE_DIR/settings.local.json" << EOF
 {
   "mcpServers": {
-    "coralogix": {
+    "clickhouse": {
       "command": "node",
       "args": ["$MCP_PATH"]
     }
@@ -115,4 +114,4 @@ echo ""
 echo "Next steps:"
 echo "  1. Reload your shell:  source $SHELL_PROFILE"
 echo "  2. Start Claude Code:  claude"
-echo "  3. The 'coralogix' MCP tool will be available automatically."
+echo "  3. The 'clickhouse' MCP tool will be available automatically."

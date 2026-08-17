@@ -4,7 +4,7 @@ Claude Code workspace for DA (Document Authoring) log analysis, error investigat
 
 ## What you can do
 
-- **Log querying** — Cloudflare access + worker trace logs via Coralogix
+- **Log querying** — Cloudflare access + worker trace logs via ClickHouse
 - **Error investigation** — 500s, exceptions, worker failures, root cause in source
 - **User behavior analysis** — traffic patterns, session analysis, unique users
 - **Cross-repo code analysis** — da-live, da-admin, da-collab, da-content, da-nx
@@ -17,7 +17,7 @@ Claude Code workspace for DA (Document Authoring) log analysis, error investigat
 - Node.js 18+
 - [Claude Code](https://claude.ai/code) CLI (`npm i -g @anthropic-ai/claude-code`)
 - [GitHub CLI](https://cli.github.com) (`brew install gh && gh auth login`)
-- Coralogix read-only API key for da-logs — get one at [da-logs.coralogix.com](https://da-logs.coralogix.com) → Settings → API Keys → New Key (scope: Query)
+- ClickHouse API key + secret for the DA logs service
 
 ### Install
 
@@ -29,7 +29,7 @@ chmod +x setup.sh && ./setup.sh
 
 `setup.sh` will:
 
-1. Install Coralogix MCP server dependencies
+1. Install ClickHouse MCP server dependencies
 2. Add your API key to your shell profile (`~/.zshrc`)
 3. Create `repos/` symlinks pointing at your local DA repo clones
 4. Generate `.claude/settings.local.json` with the local MCP server path
@@ -65,7 +65,7 @@ da-analyzer-agent/
   CLAUDE.md                         — DA knowledge base for Claude
   setup.sh                          — one-time per-developer setup
   mcp-servers/
-    coralogix/                      — Coralogix DataPrime MCP server
+    clickhouse/                     — ClickHouse MCP server
       src/index.js
       package.json
   .claude/
@@ -77,6 +77,6 @@ da-analyzer-agent/
     …
 ```
 
-## Adding a new Coralogix environment
+## Adding a new ClickHouse table or environment
 
-Edit [mcp-servers/coralogix/src/index.js](mcp-servers/coralogix/src/index.js): add the endpoint to `ENDPOINTS`, the env var key to `API_KEYS`, and update the `z.enum` in `inputSchema`.
+Edit [mcp-servers/clickhouse/src/index.js](mcp-servers/clickhouse/src/index.js) to extend the query tool.

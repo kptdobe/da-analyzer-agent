@@ -53,19 +53,13 @@ server.registerTool(
   {
     title: 'Query DA logs in ClickHouse',
     description:
-      'Execute a SQL query against the DA access logs stored in ClickHouse and return the results as JSON.\n\n'
+      'Execute a SQL query against the DA logs stored in ClickHouse and return the results as JSON.\n\n'
 
-      + '## When to use this tool vs Coralogix (`mcp__coralogix__query_coralogix`)\n\n'
-      + 'DA logs are migrating from Coralogix to ClickHouse. Use the right tool for the right data:\n\n'
+      + '## Which table to use\n\n'
       + '| Question | Use |\n'
       + '|----------|-----|\n'
-      + '| Traffic volumes, request counts, HTTP status codes, error rates, top paths | **This tool (ClickHouse)** — complete access log, reliable SQL aggregation, native time bucketing |\n'
-      + '| Worker exceptions, hung requests, uncaught errors, console.error/warn content | **Coralogix** — worker trace stream ($d.ScriptName) not yet in ClickHouse |\n'
-      + '| Access log cross-check / historical data | Either; ClickHouse is more reliable for aggregation |\n\n'
-      + '### What ClickHouse does NOT have yet\n'
-      + '- Worker trace logs: thrown exceptions, console.log/warn/error output, `$d.Outcome` (ok/exception/canceled/exceeded)\n'
-      + '- Per-request wall-clock time from the worker perspective (`$d.WallTimeMs`)\n'
-      + '- The `cdn.time_elapsed_msec` column IS available here (CDN-observed latency), but it differs from worker internal timing\n\n'
+      + '| Traffic volumes, request counts, HTTP status codes, error rates, top paths | **`helix_logs_production.da`** — complete access log, reliable SQL aggregation, native time bucketing |\n'
+      + '| Worker exceptions, hung requests, uncaught errors, console.error/warn content, per-request CPU/wall time | **`helix_logs_production.da_worker_logs`** — worker execution trace, one row per invocation, `outcome` (ok/exception/canceled/unknown), `exceptions` and `logs` arrays |\n\n'
       + '### Known data pattern: da-ue 5xx are bot noise\n'
       + '`da-ue` accounts for ~250 5xx/day but virtually all hit scanner/bot paths '
       + '(`/join_room`, `/api/heartbeat`, `/api/user/ismustmobile`, Chinese API paths, etc.). '
@@ -73,7 +67,7 @@ server.registerTool(
 
       + '## Table\n\n'
       + `\`${TABLE}\` — Cloudflare CDN access logs for DA (Document Authoring). `
-      + 'One row per HTTP request. Equivalent to the Coralogix access-log schema ($d.WorkerScriptName).\n\n'
+      + 'One row per HTTP request.\n\n'
 
       + '## Key columns\n\n'
       + 'IMPORTANT: All column names containing a dot MUST be quoted with backticks in SQL.\n\n'
@@ -99,6 +93,33 @@ server.registerTool(
       + '| `` `request.headers.user_agent` `` | String | User-Agent header |\n'
       + '| `` `response.headers.x_error` `` | String | x-error response header (set by workers on errors) |\n'
       + '| `weight` | UInt16 | Sampling weight (usually 1) |\n\n'
+
+      + '## Table: `helix_logs_production.da_worker_logs`\n\n'
+      + 'Worker execution trace for DA. One row per Worker invocation (not per HTTP request — a single request '
+      + 'can span multiple invocations, e.g. da-collab proxying to da-admin).\n\n'
+      + '| Column | Type | Description |\n'
+      + '|--------|------|-------------|\n'
+      + '| `timestamp` | DateTime64(3) | Invocation timestamp (UTC) |\n'
+      + '| `script_name` | LowCardinality(String) | Worker that ran: da-admin, da-collab, da-content, da-website, da-ue, da-docket |\n'
+      + '| `ray_id` | String | Cloudflare ray ID — join with `helix_logs_production.da.ray_id` to correlate with the access log |\n'
+      + '| `request.url` | String | Request URL |\n'
+      + '| `request.method` | LowCardinality(String) | HTTP method |\n'
+      + '| `response.status` | UInt16 | HTTP status returned |\n'
+      + '| `outcome` | LowCardinality(String) | Worker outcome: `ok`, `exception`, `canceled` (client disconnected — normal for long-lived connections), `unknown` |\n'
+      + '| `exceptions` | Array(String) | Thrown exception messages, if any |\n'
+      + '| `logs` | Array(String) | console.log/warn/error output captured during the invocation |\n'
+      + '| `cpu_ms` | UInt32 | CPU time consumed |\n'
+      + '| `wall_ms` | UInt32 | Wall-clock time from the worker perspective |\n'
+      + '| `script_version` | String | Deployed script version |\n\n'
+      + '```sql\n'
+      + "-- Exceptions for da-admin in the last hour\n"
+      + 'SELECT timestamp, `request.url`, `response.status`, exceptions, logs\n'
+      + 'FROM helix_logs_production.da_worker_logs\n'
+      + "WHERE timestamp >= now() - INTERVAL 1 HOUR AND script_name = 'da-admin'\n"
+      + '  AND length(exceptions) > 0\n'
+      + 'ORDER BY timestamp DESC\n'
+      + 'LIMIT 50\n'
+      + '```\n\n'
 
       + '## Time filtering\n\n'
       + 'Always add a `timestamp` predicate to avoid full-table scans.\n\n'

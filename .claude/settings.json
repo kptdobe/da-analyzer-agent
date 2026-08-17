@@ -1,7 +1,7 @@
 {
   "permissions": {
     "allow": [
-      "mcp__coralogix__query_coralogix",
+      "mcp__clickhouse__query_clickhouse",
       "Bash(git *)",
       "Bash(gh *)",
       "Bash(npm *)",
