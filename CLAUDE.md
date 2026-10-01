@@ -79,12 +79,22 @@ they show up.
 The MCP tool is `mcp__clickhouse__query_clickhouse`,
 backed by `./mcp-servers/clickhouse/` in this repo.
 
-### Table
+### Tables
 
-`helix_logs_production.da` — Cloudflare CDN access logs. One row per
-HTTP request. This is HTTP-level only (no console logs, no stack
-traces — those come from the worker trace stream, which is not yet in
-ClickHouse).
+`helix_logs_production` has more tables than just DA's. Full list via
+`SELECT name FROM system.tables WHERE database = 'helix_logs_production'`.
+
+| Table | Scope | Notes |
+|-------|-------|-------|
+| `da` | DA (Cloudflare) | Cloudflare CDN access logs for DA. One row per HTTP request, HTTP-level only (no console logs/stack traces — those need the worker trace stream, not yet in ClickHouse). |
+| `da_worker_logs` | DA (Cloudflare) | Worker execution trace: exceptions, console logs, per-request CPU/wall time. |
+| `delivery` | EDS/Franklin delivery (Fastly) | Full EDS content-delivery access logs (`*.aem.page` / `*.aem.live`). Has `helix.owner`/`helix.repo` but derived from host, and rich `cdn.*`/`request.headers.*` columns. Use for delivery-side 5xx/timeout investigation. |
+| `delivery_errors` | EDS delivery (Fastly) | Not yet explored — check schema before relying on it. |
+| `admin` | **Legacy Helix admin, Fastly-fronted** | ⚠️ Name collision: this is **not** `adobe/da-admin` (the DA Cloudflare worker). `source = 'fastly'`. Logs from `adobe/helix-admin` and `adobe/helix-api-service`. Includes routes like `github-bot` (AWS Lambda/API Gateway-backed GitHub bot) that don't exist in the `da-admin` codebase at all. Don't attribute errors here to `adobe/da-admin` without checking `source` and cross-checking the repo. |
+
+Other tables seen (`backend`, `cdn_facet_minutes`, `lambda_logs*`,
+`helix_mixer_logs`, `site_configs*`, `incidents`, `releases`, …) are
+legacy/broader Helix infra, unexplored — `DESCRIBE TABLE` before use.
 
 ### Key columns
 

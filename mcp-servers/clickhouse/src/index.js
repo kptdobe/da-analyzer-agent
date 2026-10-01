@@ -65,6 +65,14 @@ server.registerTool(
       + '(`/join_room`, `/api/heartbeat`, `/api/user/ismustmobile`, Chinese API paths, etc.). '
       + 'Filter these out before reporting da-ue as unhealthy.\n\n'
 
+      + '## Fast error-report workflow\n\n'
+      + 'For a request such as "all DA errors in the last 24 hours", query both tables with bounded aggregates before fetching details:\n\n'
+      + '1. Access errors: group `helix_logs_production.da` by `` `cdn.script_name` ``, `` `response.status` ``, and count, filtering `response.status >= 400`.\n'
+      + '2. Server failures: group status `>= 500` by worker, method, URL, x-error, and count; limit to 20.\n'
+      + '3. Worker failures: query `da_worker_logs` for `outcome = \'exception\'`, non-empty `exceptions`, or response status `>= 500`; group by worker, outcome, status, and count.\n'
+      + '4. Exception details: `arrayJoin(exceptions)` grouped by worker and exception, limited to 30.\n\n'
+      + 'Report exact 5xx totals separately from high-volume 4xx traffic. Label 401/403 as authorization traffic, 404 as missing-resource traffic, 499 and worker `canceled` as client disconnects, and known `da-ue` scanner paths as noise. Include the time window, counts, affected workers/routes, exception text, and references for actionable 5xx errors. Do not report sampled routes as complete totals.\n\n'
+
       + '## Table\n\n'
       + `\`${TABLE}\` — Cloudflare CDN access logs for DA (Document Authoring). `
       + 'One row per HTTP request.\n\n'
